@@ -1,0 +1,104 @@
+---
+title: "SLML_hw7"
+author: "凌浩东"
+date: "11/27/2021"
+output:
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+library(adabag)
+library(e1071)
+library(randomForest)
+library(rpart)
+library(pROC)
+library(rpart.plot)
+
+library(ggplot2)
+library(graphics)
+library(grDevices)
+library(kableExtra)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+options(knitr.table.format = "html")
+```
+
+# 读入数据
+
+```{r}
+simudata <- read.csv("simudata.csv")
+```
+
+# 用多种机器学习模型进行建模
+
+首先，按照7：3的比例对训练集和测试集进行划分。
+
+```{r}
+set.seed(1234)
+
+simudata$black <- as.factor(simudata$black)
+
+i <- sample(2, nrow(simudata), replace = T, prob = c(0.7, 0.3))
+trainset <- simudata[i == 1,]
+testset <- simudata[i == 2,]
+```
+
+然后，我们用多种机器学习方法进行建模，并在预测集上测试：
+
+```{r}
+set.seed(1234)
+
+# 逻辑回归
+lr <- glm(black~.,family = binomial(link = logit),data = trainset)
+lr.predict <- predict(lr, newdata=testset, type="response")
+
+# 决策树模型
+dt <- rpart(black~., data = trainset)
+dt.predict <- predict(dt, newdata = testset)[, 2]
+
+# Boosting模型
+boost <- boosting(black~., data=trainset)
+boost.predict <- predict(boost, newdata = testset)$prob[, 2]
+
+# 随机森林
+rf <- randomForest(black~., data=trainset)
+rf.predict <- predict(rf, newdata = testset, type = "prob")[,2]
+
+# SVM
+SVM <- svm(black~., data=trainset)
+SVM.predict <- predict(SVM, newdata = testset, decision.values = TRUE)
+SVM.predict <- attr(SVM.predict, "decision.values")[, 1]
+```
+
+# 在预测集上预测的结果
+下面，我们绘制ROC曲线，并计算AUC值。
+```{r}
+par(mfrow=c(2,3))
+plot.roc(testset$black, lr.predict, col = "red", lwd = 2, print.auc=TRUE, main="Logistic Regression") # 逻辑回归
+plot.roc(testset$black, dt.predict, col = "red", lwd = 2, print.auc=TRUE, main="Decision Tree") # 决策树
+plot.roc(testset$black, boost.predict, col = "red", lwd = 2, print.auc=TRUE, main="boosting") # boosting 模型
+plot.roc(testset$black, rf.predict, col = "red", lwd = 2, print.auc=TRUE, main="Random Forest") # 随机森林
+plot.roc(testset$black, SVM.predict, col = "red", lwd = 2, print.auc=TRUE, main="SVM") # SVM
+```
+
+按AUC值从大到小排列的结果为
+
+|logistic regression|random forest|SVM|boosting|decision tree|
+|:----:|:----:|:----:|:----:|:----:|
+|0.839|0.823|0.821|0.801|0.630|
+
+逻辑回归预测的效果最好，随机森林模型，SVM模型，boosting模型表现略逊于逻辑回归，
+决策树模型表现最差。
+
+出现这种情况的原因，可能是对于这样的二分类问题，
+数据集特征较少，数据量较小，
+特征空间比较简单，因此简单的模型可以取得很好的效果。
+
+
+
+

@@ -1,0 +1,289 @@
+---
+title: "SLML_hw3"
+author: "凌浩东"
+date: "9/29/2021"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# 合租模式下的租房价格分析
+## 简介
+本项目收集了北京市某年某月的5149条合租房源信息，
+通过建模不同房源的内部结构和外部条件因子对房源月租金的影响，
+得到了月租金与房源信息之间的**对数**线性模型。
+
+统计结果表明，
+在房源的各种信息因子中，
+对月租金影响较大的因子包括卧室数，
+卫生间数，
+房间面积，
+是否临近地铁，
+所在城区，
+以及供暖方式。
+模型的均方根误差（RMSE）为0.152，
+判定系数（R square）为0.67，
+调整后的判定系数（Adjusted R-squared）为0.67。
+
+下文将对统计和建模的过程进行具体描述。
+
+## 数据读入与汇总统计
+首先读入数据，根据csv文件的编码方式，选择`UTF-8`编码。
+
+```{r}
+data <- read.csv('data.csv', encoding = 'UTF-8')
+head(data)
+```
+展示数据前6行，可以看到一共有10列，
+其中，第一列`rent`表示房间的月租金，
+之后9列代表了房间的各种信息因子，
+包括:
+
+* 数字变量：房间数量（bedroom），客厅数（living room），卫生间数（bath room），房间面积（area）；
+* 字符变量：房间类型（room），楼层（floor_grp），是否临近地铁（subway），所在城区（region），供暖方式（heating）。
+
+使用`summary`方法，对数据进行初步的统计汇总如下。
+```{r}
+summary(data)
+```
+
+
+* `rent`，租金，分布在1150到6460之间，平均值为3230，中间数为2690，较小四分数为2240，
+较大四分位数为3230。说明大多数房源的资金集中在2000到3000的水平间，高价房源是少数。
+* `bedroom`，房间数，分布在2到5之间。平均值和中位数都在3左右。
+* `livingroom`，客厅数，分布在1到2之间，大多数为1。
+* `bathroom`，卫生间数，分布在1到2之间，大多数为1。
+* `area`，房间面积，分布在5到30之间，平均数为12.85，中位数位12。
+* `room`，房间类型，主卧有2289间，次卧有2860间。主卧和次卧的数量相当。
+* `floor_grp`，中楼层有1878间，低楼层有1679间，高楼层有1592间，数量相当。
+* `subway`，4334间临近地铁，815间不临近。大多数房源临近地铁。
+* `region`，所在城区，在朝阳的最多，在大兴的最少。
+* `heating`，供暖方式，大多数为集中供暖。
+
+## 绘制月租金直方图
+
+```{r}
+library(ggplot2)
+p <- ggplot(data = data,
+            mapping = aes(x = rent)
+            )
+p + geom_histogram(bins=30) + labs(x = '租金', y = '计数', title = '北京市某年某月租金直方图')
+```
+
+通过直方图可以进一步验证之前得到的租金的大致分布情况，
+租金呈右偏分布，
+主要集中在2000到3000之间，
+在2000以下的低价房和4000以上的高价房较少。
+
+
+## 不同城区平均租金
+计算不同城区租金平均值，按从大到小分布如下所示。
+
+```{r}
+rent_by_region <- aggregate(list(mean_rent = data$rent), list(region = data$region), FUN = mean)
+rent_by_region <- rent_by_region[order(-rent_by_region$mean_rent),]
+row.names(rent_by_region) <- NULL
+rent_by_region
+```
+
+可以看到，城区的平均租金按从大到小分布依次为西城，海淀，朝阳，东城，石景山，丰台，昌平，通州，大兴, 顺义。
+
+取最高的八个，绘制条形图如下所示。
+```{r}
+rent_by_region <- rent_by_region[1:8,]
+rent_by_region$region <- factor(rent_by_region$region, levels = rent_by_region$region)
+ggplot(data = rent_by_region, aes(x=region, y = mean_rent)) +
+  geom_bar(stat = 'identity') +
+  labs(x = '城区', y = '平均租金', title = '不同城区平均租金条形图')
+```
+
+从条形图可见，西城，海淀，朝阳，东城的平均租金都超过了3000，其他城区的平均租金在3000以下。
+
+## 月租金-城区箱线图
+绘制月租金-城区箱线图入下所示。
+```{r boxplot}
+ggplot(data, aes(x = reorder(region, rent, FUN = median), y = rent)) + 
+  geom_boxplot() +
+  labs(x = '城区', y = '月租金', title = '月租金-城区箱线图')
+```
+
+对图像分析如下：
+
+* 从中位数来看，依然是东城，朝阳，海淀，西城最高。
+* 从分布离散程度来看，朝阳，海淀，西城分布得最离散，
+大兴，房山，顺义得分布比较集中。
+* 从异常点来看，昌平，朝阳，通州，高于正常范围的异常点较多。
+只有昌平出现了低于正常范围的异常点。
+
+## 线性回归
+首先将按照要求将次卧，低楼层，远离地铁站，石景山，自采暖设置为哑变量。
+```{r}
+data$room <- factor(data$room, levels = c('次卧','主卧'))
+data$floor_grp <- factor(data$floor_grp, levels = c('低楼层','中楼层','高楼层'))
+data$subway <- factor(data$subway, c('否', '是'))
+data$region <- factor(data$region, c('石景山','朝阳','海淀','东城','西城', '昌平','大兴', '通州', '丰台', '顺义', '房山'))
+data$heating <- factor(data$heating, c('自采暖','集中供暖'))
+```
+然后，对数据进行线性回归拟合。
+```{r}
+model <- lm(rent~., data = data)
+summary(model)
+```
+
+从拟合结果可见，拟合的均方根误差为454.1，判定系数R方为0.65，调整后的R方为0.65。
+
+对模型系数的分析如下：
+
+* 截距估计为1593.22。
+* 房间数的系数为-90.55，说明房间数增加，月租金反而减少。
+这可能是由于房间数增加，合租的房客也会增加，因此每个人的租金相对减少一些。
+* 客厅数的系数为-168，但是p-value较大，这个因子对模型的重要程度较小。
+* 卫生间的系数为182.11，说明卫生间数大，租金上升。
+* 面积的系数为76.69，说明房间面积增大，相应的租金就会提高。
+* 主卧的系数为0.08，p-value很大， 说明是否是主卧对租金的影响很不明显。
+* 中楼层的系数为-55.60，说明相比于低楼层，中楼层租金反而会减小。可能是因为低楼层比较方便出入。
+* 高楼层的系数为-24.99，但p-value很大，对模型的重要性不明显。
+* 临近地铁的系数为280.44，说明临近地铁的房源租金较高。
+* 朝阳，海淀，东城，西城，丰台的系数为正，说明相比于石景山，这些地区的租金一般会偏高。
+* 大兴，通州，顺义，房山的系数为负，说明相比于石景山，这些地区的租金一般会偏低。
+* 昌平对模型的重要程度不明显。
+* 集中供暖的房源租金较高。
+
+## 使用BIC准则进行变量选择
+使用`step`方法对模型变量进行选择。
+
+值得注意的是`step`方法中，
+变量k的默认值为2，表示的是**AIC**(Akaike Information Criterion),
+将k设置为$\log\left(n\right)$，
+其中n表示数据点的个数，
+就能使用**BIC**(Bayesian Information Criterion)。
+```{r results='hide'}
+selected_model <- step(model, k = log(5149))
+```
+```{r}
+summary(selected_model)
+```
+最终得到的`selected_model`中，被排出的变量包括客厅数，是否是主卧，所在楼层，
+客厅数，是否主卧在之前线性回归时就已经判断出重要性较低。
+在之前的线性模型中也说明了是否是高楼层对模型的影响较小。
+因此通过BIC进行的变量选择之前得到线性模型后作出的判断是基本相符的。
+
+变量选择后，得到拟合结果中，
+均方根误差为454.7，R方为0.65，调整后的R方为0.64。
+
+## 交叉验证
+最后，我们对进行变量选择后的因子进行5折交叉验证。
+使用`train`方法，将变量`trControl`设置为5折交叉验证,
+得到最终的模型如下所示。
+```{r}
+library(DAAG)
+```
+
+```{r fig.show="hide", warning=FALSE}
+cvlm <- cv.lm(data, selected_model, m = 5, printit = F, seed = 42)
+```
+```{r}
+attr(cvlm, 'ms')
+```
+五折交叉验证结果显示，模型的误差较大，说明线性回归模型的效果不佳。
+
+对模型进行回归诊断：
+```{r}
+par(mfrow=c(2,2))
+plot(selected_model, which=c(1:4))
+```
+从图中可以看到，
+
+* 残差图的分布显示，存在非线性因素。当租金升高时，残差也在升高，即有异方差
+情况发生。
+* qqplot图显示，残差的尾部正态性不佳
+* 从scale-location图中可以更明显看到异方差的现象
+* 从最后一张图看出，693、2492、4821是异常值。
+
+下面，尝试对数线性模型。
+
+```{r}
+loglm <- lm(log(rent)~., data)
+summary(loglm)
+```
+```{r results='hide'}
+selected_loglm <- step(loglm, k = log(5149))
+```
+
+```{r}
+summary(selected_loglm)
+```
+
+```{r fig.show="hide", warning=FALSE}
+cvloglm <- cv.lm(data, selected_loglm, m = 5, printit = F, seed = 42)
+attr(cvloglm, 'ms')
+```
+误差小了许多。
+```{r}
+par(mfrow=c(2,2))
+plot(selected_loglm, which=c(1:4))
+```
+通过回归诊断可见，异方差情况好了很多。
+
+
+## 总结
+本文对北京某年某月的5149条合租房源信息，
+通过建模不同房源的内部结构和外部条件因子对房源月租金的影响，
+得到了月租金与房源信息之间的模型。
+
+在统计过程中，
+通过五折交叉验证以及回归诊断，
+发现线性模型的不适用，
+最终采用了对数线性模型，
+较好地拟合了数据。
+
+统计结果表明，
+卫生间数，面积，临近地铁，集中供暖对租金起正向作用，
+房间数对租金起负向作用。
+模型的均方根误差（RMSE）为0.152，
+判定系数（R square）为0.67，
+调整后的判定系数（Adjusted R-squared）为0.67。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

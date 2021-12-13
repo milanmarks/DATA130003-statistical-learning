@@ -1,0 +1,106 @@
+---
+title: "征信系列-用户行为数据分析"
+author: "凌浩东"
+date: "11/16/2021"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+library(rpart)
+library(pROC)
+library(rpart.plot)
+
+library(ggplot2)
+library(graphics)
+library(grDevices)
+library(kableExtra)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+options(knitr.table.format = "html")
+```
+
+# 读入数据
+
+```{r}
+simudata <- read.csv("simudata.csv")
+```
+
+# 交易笔数和所有用户行为均值箱线图
+
+```{r}
+ggplot(simudata, aes(as.factor(black), billnum)) + 
+  geom_boxplot(fill = c("#8FBC94", "#548687")) + 
+  labs(x = "是否违约（1-是，0-否）", y = "交易笔数", title = "违约组和非违约组交易笔数对比箱线图")
+```
+
+由违约组和非违约组交易笔数对比箱线图可以看出，
+非违约组交易笔数的中位数更大，
+说明非违约组相对于违约组交易总笔数更多。
+
+```{r}
+ggplot(simudata, aes(as.factor(black), meanpay)) + 
+  geom_boxplot(fill = c("#8FBC94", "#548687")) + 
+  labs(x = "是否违约（1-是，0-否）", y = "所有行为均值", title = "违约组和非违约组所有行为均值对比箱线图")
+```
+
+由违约组和非违约组所有行为均值对比箱线图可以看出，
+非违约组被记录的所有交易行为的平均金额中位数更大，
+说明非违约组的正常交易使用金额偏大。
+
+
+# 用决策树模型进行建模
+
+首先，按照7：3的比例对训练集和测试集进行划分。
+
+
+```{r}
+set.seed(1234)
+
+simudata$black <- as.factor(simudata$black)
+
+i <- sample(2, nrow(simudata), replace = T, prob = c(0.7, 0.3))
+trainset <- simudata[i == 1,]
+testset <- simudata[i == 2,]
+```
+
+然后，用决策树模型进行建模。
+
+```{r, results='hide'}
+tree <- rpart(black~., data = trainset)
+pred <- predict(tree, testset)[,2]
+roc(testset$black, pred, plot = T, print.auc = T)
+```
+
+```{r}
+rpart.plot(tree, main = "用户诚信决策树")
+```
+
+根据决策树，最近一次信贷消费距今小于184天时，
+用户未违约，否则需要查看其所有交易行为的平均金额；
+
+若用户被记录的所有交易行为的平均金额不小于290000时，
+用户非违规，否则需要查看四大行消费金额。
+
+若用户在四大行消费金额的平均值不小于536000时，
+用户非违规，否则需要查看银行卡数；
+
+若银行卡数不小于7，用户违约，否则需要查看最近一次转账；
+
+若最近一次转账距今小于186天，
+用户非违规，否则需要查看借记类消费频率；
+
+若借记类消费频率不小于76，
+用户非违规，否则用户违规。
+
+
+
+
+
+
+

@@ -1,0 +1,309 @@
+---
+title: "SLML_hw4"
+author: "凌浩东"
+date: "10/23/2021"
+output: 
+  html_document:
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    number_sections: false  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(gridExtra)
+library(kableExtra)
+library(pROC)
+knitr::opts_chunk$set(echo = TRUE)
+options(knitr.table.format = "html") 
+```
+
+## 1
+
+### (1)
+
+From 
+$$
+\begin{align*}
+p(x_i;\beta) = P(Y=1|X=x_i) = \frac{exp(x_i^T\beta)}{1+exp(x_i^T\beta)}
+\end{align*}
+$$
+we can derive that 
+$$
+log\left(\frac{p(x_i;\beta)}{1-p(x_i;\beta)}\right) = x_i^T\beta
+$$
+Hence,
+$$
+\begin{align*}
+\mathcal{l}(\beta) &= \sum_{i = 1}^{N}\left\{y_ilog\,p(x_i;\beta)+(1-y_i)log(1-p(x_i;\beta))\right\} \\
+&= \sum_{i = 1}^{N}\left\{y_i[log\,p(x_i;\beta) - log(1-p(x_i;\beta)))]+log(1-p(x_i;\beta))\right\}\\
+&= \sum_{i = 1}^{N}\left\{y_ilog\left(\frac{p(x_i;\beta)}{1-p(x_i;\beta)}\right)+log(1-p(x_i;\beta))\right\}\\
+& =\sum_{i = 1}^{N} \left\{y_ix_i^T\beta-log(1+exp(x_i^T\beta))\right\}
+\end{align*}
+$$
+
+### (2)
+$$
+\begin{align*}
+\frac{\partial l(\beta)}{\partial \beta} &= \sum_i \left((y_i - 1)x_i + \frac{1}{1+exp(x_i^T\beta)}x_i\right)\\
+\frac{\partial^2 l(\beta)}{\partial \beta \partial \beta^T} 
+& = \sum_i \left(-\frac{exp(x_i^T\beta)x_ix_i^T}{(1+exp(x_i^T\beta))^2}\right)\\
+& = -\sum_i x_ix_i^Tp(x_i;\beta)\{1-p(x_i;\beta)\}
+\end{align*}
+$$
+```{r}
+NR <- function(N = 200) {
+  result <- matrix(0, 3, 0)
+  beta = matrix(c(0.5, 1.2, -1), 3, 1)
+  for (R in 1:200) {
+    x1 <- matrix(rnorm(N), N, 1)
+    x2 <- matrix(rnorm(N), N, 1)
+    x <- cbind(matrix(1, N, 1), x1, x2)
+    prob <- exp(x%*%beta)/(1+exp(x%*%beta))
+    y <- rbinom(N, size = 1, prob = prob) 
+    
+    beta_old = c(-1, -1, -1) 
+		beta_new = c(0.5, 0.5, 0.5)
+		while(max(abs(beta_old-beta_new)) > 1e-5) {
+			p <- exp(x %*% beta_new)/(1+exp(x %*% beta_new))  
+			w <- diag(c(p*(1-p)))
+			beta_old <- beta_new
+			beta_new <- beta_old + solve(t(x)%*%w%*%x)%*%t(x)%*%(y-p)
+		}
+		result <- cbind(result, beta_new) 
+	}
+	result  
+}
+
+N <- c(200, 500, 800, 1000)
+result1 <- NR(N[1])
+result2 <- NR(N[2])
+result3 <- NR(N[3])
+result4 <- NR(N[4])
+
+boxplot(result1[1,]-0.5, result2[1,]-0.5, result3[1,]-0.5, result4[1,]-0.5, 
+col="#ffff00", border="dimgray",
+main="各轮次计算的beta_0与实际值差值的分布箱线图", ylab="差值", 
+names=c('N=200','N=500','N=800','N=1000'))
+
+boxplot(result1[2,]-1.2, result2[2,]-1.2, result3[2,]-1.2, result4[2,]-1.2, 
+col="#ffff00", border="dimgray",
+main="各轮次计算的beta_1与实际值差值的分布箱线图", ylab="差值", 
+names=c('N=200','N=500','N=800','N=1000'))
+
+boxplot(result1[3,]+1, result2[3,]+1, result3[3,]+1, result4[3,]+1, 
+col="#ffff00",border="dimgray",
+main="各轮次计算的beta_2与实际值差值的分布箱线图", ylab="差值", 
+names=c('N=200','N=500','N=800','N=1000'))
+```
+
+### (3)
+
+证明借鉴了[StackExchange](https://stats.stackexchange.com/questions/190216/why-is-roc-auc-equivalent-to-the-probability-that-two-randomly-selected-samples)
+
+假设现在共n个样本点已经按照样本值从大到小排列，
+即$f(x_1) > \cdots > f(x_n)$。
+设置阈值$\tau \in {f(x_1), \cdots, f(x_n)}$，
+记$\tau = f(x_i)$时的TPR和FPR分别为
+$TPR_i$，$FPR_i$，
+则
+$$
+TPR_i = \frac{\sum_{k=1}^{i}I(y_k = 1)}{m^+}\\
+FPR_i = \frac{\sum_{k=1}^{i}I(y_k = 0)}{m^-}
+$$
+ROC图线下的面积为：
+$$
+\begin{align*}
+AUC &= \sum_{i=1}^{n-1}\frac{1}{2}(TPR_i+TPR_{i+1})(FPR_{i+1}-FPR_i)\\
+&= \frac{1}{2m^+m^-}\sum_{i=1}^{n-1}\left(\sum_{k=1}^{i}I(y_k = 1)+\sum_{k=1}^{i+1}I(y_k = 1)\right)\left(\sum_{k=1}^{i+1}I(y_k = 0)-\sum_{k=1}^{i}I(y_k = 0)\right)\\
+&= \frac{1}{2m^+m^-}\sum_{i=1}^{n-1}\left(2\sum_{k=1}^{i}I(y_k = 1)+I(y_{i+1} = 1)\right)I(y_{i+1} = 0)\\
+*& = \frac{1}{m^+m^-}\sum_{i=1}^{n-1}\sum_{k=1}^{i}I(y_k = 1)I(y_{i+1} = 0)\\
+&=  \frac{1}{m^+m^-}\sum_{k<i+1}I(y_k > y_{i+1})\\
+&= \frac{1}{m^+m^-}\sum_{x^+\in D^+}\sum_{x^-\in D^-}(I(f(x^+)>f(x^-)))
+\end{align*}
+$$
+带星号的等式成立的原因是$I(y_{i+1} = 1)I(y_{i+1} = 0)=0$。
+
+下面对最后一个等式进行分析：
+$\sum_{k<i+1}I(y_k > y_{i+1})$的意思是，
+对任意一对样本点，
+若其中样本值较大的那一点是正例，
+样本值较小的那一点是负例，
+则对其进行计数。
+
+$\sum_{x^+\in D^+}\sum_{x^-\in D^-}(I(f(x^+)>f(x^-)))$的意思是，
+对任意一对正负样本，
+若正样本的值大于负样本的值，
+对其进行计数。
+
+显然，这两者是相等的。
+
+因此，
+$$
+\begin{align*}
+1-AUC &= 1- \frac{1}{m^+m^-}\sum_{x^+\in D^+}\sum_{x^-\in D^-}I(f(x^+)>f(x^-))\\
+&= \frac{1}{m^+m^-}\sum_{x^+\in D^+}\sum_{x^-\in D^-}(1-I(f(x^+)>f(x^-)))\\
+& = \frac{1}{m^+m^-}\sum_{x^+\in D^+}\sum_{x^-\in D^-}I(f(x^+)<f(x^-))\\
+& = l_{rank}
+\end{align*}
+$$
+
+## 2 客户流失预警数据分析及算法实现
+
+### 2.1 读入训练数据
+```{r echo = T, results='hide'}
+sampledata <- read.csv('sampledata.csv')
+preddata <- read.csv('preddata.csv')
+```
+
+训练数据的初步统计结果如下：
+
+```{r}
+summary(sampledata) %>%
+  kbl() %>%
+  kable_styling()
+```
+
+
+### 2.2 绘制因变量和各个自变量的箱线图
+
+
+
+```{r}
+p1 <- ggplot(sampledata, aes(x = as.factor(churn), y = log(tenure), fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('对数在网时长')
+p2 <- ggplot(sampledata, aes(x = as.factor(churn), y = expense, fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('当月花费')
+p3 <- ggplot(sampledata, aes(x = as.factor(churn), y = degree, fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('个体的度')
+p4 <- ggplot(sampledata, aes(x = as.factor(churn), y = tightness, fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('联系强度')
+p5 <- ggplot(sampledata, aes(x = as.factor(churn), y = entropy, fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('个体信息熵')
+p6 <- ggplot(sampledata, aes(x = as.factor(churn), y = chgdegree, fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('个体度变化')
+p7 <- ggplot(sampledata, aes(x = as.factor(churn), y = chgexpense, fill = as.factor(churn)))  + geom_boxplot() + theme(legend.position="none") +
+  xlab('是否流失') + ylab('花费变化')
+
+grid.arrange(p1,p2,p3,p4,p5,p6,p7, nrow=2)
+
+```
+
+### 2.3 建立逻辑回归模型
+
+```{r}
+traindata <- sampledata
+traindata[2:8] <- scale(traindata[2:8]) # 对自变量进行标准化
+lr <- glm(churn~tenure+expense+degree+tightness+entropy+chgexpense+chgdegree, family = binomial(link=logit), data = traindata)
+summary(lr)
+```
+```{r}
+exp(lr$coefficients)
+```
+一个事件的几率（odds）是指事件发生的概率
+与事件不发生概率的比值。
+在本案例中，几率指的是客户流失与客户不流失的概率比值，且
+$$
+odds = \frac{p}{1-p} = e^{\beta^Tx}
+$$
+
+
+```{r}
+sapply(sampledata[2:8], sd)
+```
+因此，由上面代码运行的结果可见，
+
+* 在网时长每增加966天，客户流失的几率下降为原来的78%
+
+* 当月花费每增加89.55元，客户流失的几率下降为原来的75%
+
+* 个体的度增加49，客户流失的几率下降为原来的48%
+
+* 联系强度增加7，客户流失的几率下降为原来的80%
+
+* 个体信息熵增加0.86，客户流失的几率下降为原来的70%
+
+* 个体度变化增加0.27，客户流失的几率下降为原来的85%
+
+* 花费变化增加0.39，客户流失的几率下降为原来的68%
+
+
+### 2.4 对训练集和测试集进行预测
+阈值为0.5时，
+对训练集和测试集的预测结果如下：
+```{r}
+train_hat <- predict.glm(lr, newdata = traindata, type = 'response')
+train_pred1 <- 1*(train_hat > 0.5)
+table(train_pred1, traindata$churn)
+```
+```{r}
+testdata <- preddata
+testdata[2:8] <- scale(testdata[2:8])
+test_hat <- predict.glm(lr, newdata = testdata, type = 'response')
+test_pred1 <- 1*(test_hat > 0.5)
+table(test_pred1, testdata$churn)
+```
+
+阈值为平均值时，
+对训练集和测试集的预测结果如下：
+```{r}
+train_pred2 <- 1*(train_hat > mean(traindata$churn))
+table(train_pred2, traindata$churn)
+```
+
+```{r}
+test_pred <- 1*(test_hat > mean(testdata$churn))
+table(test_pred, testdata$churn)
+```
+
+
+
+### 2.5 绘制训练集和测试集上预测结果的ROC曲线
+```{r warning=FALSE, results='hide', message=FALSE}
+plot.roc(traindata$churn, train_hat, col = 'red', lwd = 2, xaxs = 'i', yaxs = 'i', print.auc = T)
+```
+
+```{r warning=FALSE, results='hide',message=FALSE}
+plot.roc(testdata$churn, test_hat, col = 'red', lwd = 2, xaxs = 'i', yaxs = 'i', print.auc=T)
+```
+
+模型在训练集和测试集上的AUC分别为
+0.773和0.782，证明模型的泛化能力较强。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

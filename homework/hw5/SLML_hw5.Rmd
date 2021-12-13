@@ -1,0 +1,138 @@
+---
+title: "市长电话"
+author: "凌浩东"
+date: "11/1/2021"
+output:
+  html_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(graphics)
+library(grDevices)
+library(e1071)
+library(kableExtra)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+options(knitr.table.format = "html") 
+```
+
+# 读入数据并初步统计
+
+```{r}
+traindata <- read.csv("train_set.csv")
+testdata <- read.csv("test_set.csv")
+```
+
+统计训练集中各个政府单位接到的市民投诉量，并绘制柱状图如下：
+
+```{r}
+ggplot(traindata, aes(x = reorder(单位名称, -rep(1, length(单位名称)), sum))) + geom_bar(fill = "#548687") +
+  labs(x = '单位名称', y = '市民投诉量', title = '训练集中各个政府单位接到市民投诉量的柱状图')
+```
+
+观察到的现象：
+
+1. 市水务集团接到的市民投诉量最多，在500条以上，
+说明该市水务方面存在问题较多或对市民生活影响较大。
+
+2. 市供电公司受到的市民投诉量最少，在100条以下，
+说明该市供电方面问题较少或者对市民影响不大。
+
+# 统计每条投诉用词数
+
+统计每条投诉用词数并绘制分布直方图如下：
+
+```{r}
+traindata$wordcount <- rowSums(traindata[, 2:ncol(traindata)])
+ggplot(traindata, aes(wordcount)) + geom_histogram(fill = '#548687') +
+  labs(x = '投诉用词数', y = '用词量出现的频数', title = '投诉用词量直方图') +
+  scale_x_continuous(breaks = seq(0, 150, 20))
+```
+
+观察到的现象：投诉量用词数集中在10~40词之间。
+
+# 各单位收集到的次数差异
+
+将各单位收集到投诉总词数对数的差异用箱线图展示如下：
+
+```{r}
+ggplot(traindata, aes(x = reorder(单位名称, wordcount, median), y = log(wordcount))) +
+  geom_boxplot(fill = "#548687") +
+  labs(x = '单位名称', y = '对数投诉用词量', title = '对数投诉用词量-单位的箱线图')
+```
+
+箱线图说明：
+
+1. 从用词量中位数来看：各个单位受到投诉用词量中位数相近，
+市公交集团接受到投诉的用词量中位数最少，
+市房地集团接受到投诉的用词量中位数最多。
+
+2. 从用词量分布的密集程度来看，市供热公司接受到投诉用词量分布较集中，
+其他单位受到投诉量分布密集程度相近。
+说明在大多数情况下市民对供热的投诉的内容可能比较相近。
+
+3. 从离群值来看，市供热公司接受到投诉量用词量离群值较多。
+说明在一些情况下，市民对供热的投诉用词较多，可能是比较复杂的供热问题。
+
+# 用朴素贝叶斯方法对市政电话文本进行建模
+
+由于投诉建议文本整体长度较短，将每个词汇的被使用频数用是（1）-否（0）被使用替代：
+
+```{r}
+traindata.aug <- traindata
+traindata.aug[,2:ncol(traindata.aug)] <- traindata[,2:ncol(traindata)] > 0
+testdata.aug <- testdata
+testdata.aug[,2:ncol(testdata.aug)] <- testdata[,2:ncol(testdata)] > 0
+```
+
+使用朴素贝叶斯模型对训练集数据进行建模：
+```{r}
+nbm <- naiveBayes(单位名称~., data = traindata.aug)
+```
+
+使用模型对测试集进行预测，并计算混淆矩阵：
+```{r}
+pred <- predict(nbm, testdata.aug[, 2:ncol(testdata.aug)])
+confusion.matrix <- table(testdata.aug[,1], pred)
+```
+
+```{r}
+par(mar=c(5.1, 6.1, 4.1, 2.1), las=2)
+image(confusion.matrix, col = hcl.colors(n = 32, palette = "Greens 3", rev = T), axes = F)
+axis(1, at = seq(0, 1, length = nrow(confusion.matrix)), labels = rownames(confusion.matrix))
+axis(2, at = seq(0, 1, length = ncol(confusion.matrix)), labels = colnames(confusion.matrix))
+title('朴素贝叶斯模型在测试集上预测结果的混淆矩阵')
+```
+
+模型在预测集上的准确率达到了97%，
+从混淆矩阵可以看到
+模型的预测效果较好。
+
+需要注意的是，
+测试集上各个单位受到的投诉量的相对大小与
+训练集保持一致（比如，市水务集团最多，市供电公司最少）。
+并且测试集数量较少（仅为训练集大小的$\frac{1}{19}$），
+因此想要进一步验证模型的泛化能力，
+应该使用更多的测试数据，
+并且考虑调整不同单位受到投诉量的比例。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
